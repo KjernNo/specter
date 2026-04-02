@@ -105,8 +105,6 @@ See the voltage divider warning at the top of this file before connecting.
 ```
 TP4056 B+   →  Battery +
 TP4056 B-   →  Battery -
-TP4056 IN+  →  5V USB (charging input)
-TP4056 IN-  →  GND
 ```
 
 ---
