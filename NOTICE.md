@@ -1,7 +1,7 @@
 # NOTICE
 
 ## SPECTER Firmware
-**Copyright (C) 2025 Phillip Rødseth / Kjern Electronics**
+**Copyright (C) 2026 Phillip Rødseth / Kjern.no**
 Source: https://github.com/KjernNo/specter
 
 This firmware is licensed under the **CERN Open Hardware Licence Version 2 - Weakly Reciprocal (CERN-OHL-W-2.0)**.
