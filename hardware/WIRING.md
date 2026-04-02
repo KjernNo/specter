@@ -141,7 +141,7 @@ TP4056 B-   →  Battery -
 | Charger                | TP4056 module         |
 | Buttons                | Tactile push switches x5 |
 | Buzzer                 | Active piezo buzzer 3.3V |
-| Decoupling cap (NRF)   | 10µF electrolytic or ceramic |
+| Decoupling cap (NRF)   | 10µF electrolytic |
 | Voltage divider R1     | 100kΩ 1/4W            |
 | Voltage divider R2     | 100kΩ 1/4W            |
 | Pull-down (buzzer)     | 10kΩ 1/4W (optional, see buzzer section) |
