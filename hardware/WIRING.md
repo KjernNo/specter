@@ -67,14 +67,14 @@ this cap the supply voltage dips momentarily causing init failures and corrupted
 This capacitor is not optional if you want reliable behaviour.
 
 ### Navigation Buttons (x5)
-Each button has one leg on the GP pin and the other leg on GND.
+Each button has one leg on the GP pin and the other leg on 3V3.
 No external resistors needed, the firmware uses internal pull-downs.
 ```
-UP button      →  GP2  and GND
-DOWN button    →  GP3  and GND
-SELECT button  →  GP4  and GND
-BACK button    →  GP5  and GND
-POWER button   →  GP6  and GND
+UP button      →  GP2  and 3V3
+DOWN button    →  GP3  and 3V3
+SELECT button  →  GP4  and 3V3
+BACK button    →  GP5  and 3V3
+POWER button   →  GP6  and 3V3
 ```
 
 ### Piezo Buzzer
