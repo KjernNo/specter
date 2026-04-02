@@ -55,4 +55,4 @@ See section 6 of the CERN-OHL-W v2 licence for the full disclaimer of warranty a
 
 ---
 
-*Kjern Electronics — kjern.no*
+*Kjern — kjern.no*
