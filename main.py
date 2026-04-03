@@ -317,4 +317,4 @@ def main():
 
         utime.sleep_ms(20)   # small sleep to keep cpu usage reasonable in the menu loop
 
-main()
+main() 
