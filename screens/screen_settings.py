@@ -53,7 +53,7 @@ def _val_display(key, val):
     if key == "language":
         return "NO" if val == 'no' else "EN"
     if key == "buzzer_on":
-        return "PA" if val == 1 else "AV"   # pa = on in norwegian, av = off
+        return "ON" if val == 1 else "OFF"   # Should explain iself, right..?
     if key == "wifi_ssid":
         ssid = storage.get_setting('wifi_ssid')
         return ssid[:8] if ssid else "---"   # show saved ssid or dashes if none
