@@ -23,9 +23,11 @@
 import network
 import utime
 import os
+import gc
 import storage
 import buttons
 import buzzer
+import logger
 from lang import T
 
 # read version from settings so it reflects the actual installed version
@@ -80,75 +82,98 @@ def _draw_progress(oled, label, pct):
     oled.text(str(pct) + "%", 52, 48)
     oled.show()
 
-def _extract_zip(oled, data):
-    # minimal zip extractor for micropython
-    # handles method 0 (stored) and method 8 (deflated)
-    # scans for PK\x03\x04 local file header signatures and extracts each file
-    # creates parent directories automatically
-    import uzlib
+def _extract_zip(oled, zip_path):
+    # zip extractor that reads directly from a file on flash
+    # never loads more than one file at a time into RAM
+    # this avoids the memory fragmentation issue of loading the whole zip at once
+    #
+    # reads the zip file sequentially using seek() and read()
+    # for each file entry: reads header, reads compressed data, decompresses, writes
+    # only the compressed data for one file is ever in RAM at a time
     import ustruct
 
-    pos       = 0
-    total_sig = b'PK\x03\x04'
+    SIG = b'PK\x03\x04'
 
-    # count files first for accurate progress bar
+    # first pass: count files for progress bar
     count = 0
-    tmp   = 0
-    while tmp < len(data) - 4:
-        if data[tmp:tmp+4] == total_sig:
-            count += 1
-        tmp += 1
+    with open(zip_path, 'rb') as f:
+        while True:
+            buf = f.read(1)
+            if not buf:
+                break
+            if buf == b'P':
+                rest = f.read(3)
+                if rest == b'K\x03\x04':
+                    count += 1
+                else:
+                    f.seek(-len(rest), 1)
 
     _draw_progress(oled, T("ota_installing"), 0)
-
     done = 0
-    while pos < len(data) - 4:
-        if data[pos:pos+4] != total_sig:
-            pos += 1
-            continue
 
-        pos      += 4
-        pos      += 2   # version needed
-        pos      += 2   # general purpose flag
-        method    = ustruct.unpack('<H', data[pos:pos+2])[0]; pos += 2
-        pos      += 4   # mod time/date
-        pos      += 4   # crc32
-        comp_sz   = ustruct.unpack('<I', data[pos:pos+4])[0]; pos += 4
-        uncomp_sz = ustruct.unpack('<I', data[pos:pos+4])[0]; pos += 4
-        fname_len = ustruct.unpack('<H', data[pos:pos+2])[0]; pos += 2
-        extra_len = ustruct.unpack('<H', data[pos:pos+2])[0]; pos += 2
-        fname     = data[pos:pos+fname_len].decode('utf-8'); pos += fname_len
-        pos      += extra_len
+    with open(zip_path, 'rb') as f:
+        file_size = f.seek(0, 2)   # seek to end to get size
+        f.seek(0)                   # back to start
 
-        file_data  = data[pos:pos+comp_sz]
-        pos       += comp_sz
+        while f.tell() < file_size - 4:
+            # scan for local file header signature
+            buf = f.read(1)
+            if not buf:
+                break
+            if buf != b'P':
+                continue
+            rest = f.read(3)
+            if rest != b'K\x03\x04':
+                f.seek(-len(rest), 1)
+                continue
 
-        if fname.endswith('/'):
-            try:
-                os.mkdir('/' + fname.rstrip('/'))
-            except:
-                pass
-            continue
+            # read local file header
+            f.read(2)   # version needed
+            f.read(2)   # flags
+            method    = ustruct.unpack('<H', f.read(2))[0]
+            f.read(4)   # mod time/date
+            f.read(4)   # crc32
+            comp_sz   = ustruct.unpack('<I', f.read(4))[0]
+            uncomp_sz = ustruct.unpack('<I', f.read(4))[0]
+            fname_len = ustruct.unpack('<H', f.read(2))[0]
+            extra_len = ustruct.unpack('<H', f.read(2))[0]
+            fname     = f.read(fname_len).decode('utf-8')
+            f.read(extra_len)
 
-        if method == 8:
-            file_data = uzlib.decompress(file_data, -15)
-        elif method != 0:
-            continue
+            # read compressed data for this file only
+            file_data = f.read(comp_sz)
 
-        full_path = '/' + fname
-        parts = full_path.split('/')
-        for i in range(2, len(parts)):
-            d = '/'.join(parts[:i])
-            try:
-                os.mkdir(d)
-            except:
-                pass
+            if fname.endswith('/'):
+                try:
+                    os.mkdir('/' + fname.rstrip('/'))
+                except:
+                    pass
+                continue
 
-        with open(full_path, 'wb') as f:
-            f.write(file_data)
+            if method != 0:
+                # zip was built with -0 (store only) so method should always be 0
+                # if its not, skip this file rather than crashing
+                logger.log("OTA: skipping file with unsupported method " + str(method) + ": " + fname)
+                continue
 
-        done += 1
-        _draw_progress(oled, T("ota_installing"), int(done * 100 / max(count, 1)))
+            # create parent directories
+            full_path = '/' + fname
+            parts = full_path.split('/')
+            for i in range(2, len(parts)):
+                d = '/'.join(parts[:i])
+                try:
+                    os.mkdir(d)
+                except:
+                    pass
+
+            with open(full_path, 'wb') as out:
+                out.write(file_data)
+
+            del file_data   # free immediately after writing
+            gc.collect()
+
+            done += 1
+            _draw_progress(oled, T("ota_installing"), int(done * 100 / max(count, 1)))
 
 def run(oled):
     import power
@@ -246,44 +271,75 @@ def run(oled):
             break
         utime.sleep_ms(20)
 
-    # download -- urequests follows the 302 redirect from /update/latest
-    # to the actual github release zip automatically
+    # stream zip directly to flash instead of buffering in RAM
+    # 147KB free sounds like plenty for a 50KB zip but memory fragmentation
+    # means there isnt a single contiguous block big enough to hold it
+    # writing to flash in chunks sidesteps this entirely
+    TEMP_ZIP = '/data/update.zip'
+    gc.collect()
+    logger.log("OTA: streaming download to flash, free RAM: " + str(gc.mem_free()) + "B")
     _draw_progress(oled, T("ota_downloading"), 0)
+
     try:
-        r     = urequests.get(UPDATE_URL, timeout=60)   # longer timeout for big zip
+        r     = urequests.get(UPDATE_URL, timeout=60)
         total = int(r.headers.get('Content-Length', 0))
-        data  = bytearray()
-        chunk = 4096
-        while True:
-            buf = r.raw.read(chunk)
-            if not buf:
-                break
-            data.extend(buf)
-            if total > 0:
-                _draw_progress(oled, T("ota_downloading"), int(len(data) * 100 / total))
+        chunk = 1024   # small chunks so we never need much RAM at once
+        done  = 0
+
+        with open(TEMP_ZIP, 'wb') as f:
+            while True:
+                buf = r.raw.read(chunk)
+                if not buf:
+                    break
+                f.write(buf)
+                done += len(buf)
+                if total > 0:
+                    _draw_progress(oled, T("ota_downloading"), int(done * 100 / total))
         r.close()
+        gc.collect()
+        logger.log("OTA: download OK, " + str(done) + "B written to flash")
+
     except Exception as e:
+        err_str = str(e)
+        logger.log("OTA download error: " + err_str)
+        try: os.remove(TEMP_ZIP)
+        except: pass
         buzzer.error()
         oled.fill(0)
-        oled.text(T("ota_failed"), 8, 28)
-        oled.text((T("ota_error") + str(e))[:16], 0, 40)
+        oled.text(T("ota_failed"), 8, 10)
+        oled.hline(0, 20, 128, 1)
+        oled.text(err_str[:16],   0, 24)
+        oled.text(err_str[16:32], 0, 34)
+        oled.text(err_str[32:48], 0, 44)
+        oled.text("see error log", 0, 56)
         oled.show()
-        utime.sleep_ms(2000)
+        utime.sleep_ms(3000)
         wlan.active(False)
         return
 
-    # extract and install
+    # read zip from flash and extract
+    # reading from flash doesnt fragment RAM the same way as downloading
     try:
-        _extract_zip(oled, bytes(data))
+        gc.collect()
+        logger.log("OTA: extracting from flash, free RAM: " + str(gc.mem_free()) + "B")
+        _extract_zip(oled, TEMP_ZIP)
+        gc.collect()
     except Exception as e:
+        logger.log("OTA extract error: " + str(e))
         buzzer.error()
         oled.fill(0)
         oled.text(T("ota_failed"), 8, 20)
-        oled.text((T("ota_error") + str(e))[:16], 0, 34)
+        oled.text(str(e)[:16],     0, 34)
+        oled.text(str(e)[16:32],   0, 44)
+        oled.text("see error log",  0, 56)
         oled.show()
         utime.sleep_ms(2500)
         wlan.active(False)
         return
+    finally:
+        # always clean up the temp zip whether extraction succeeded or not
+        try: os.remove(TEMP_ZIP)
+        except: pass
 
     # save new version to settings so device knows what it is after reboot
     storage.set_setting('version', remote_ver)
