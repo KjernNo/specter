@@ -93,7 +93,7 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.new }}
           ZIP_NAME="specter-firmware-v$VERSION.zip"
-          zip -r "$ZIP_NAME" \
+          zip -r -0 "$ZIP_NAME" \
             main.py \
             core/ \
             screens/ \
@@ -101,6 +101,9 @@ jobs:
             --exclude "*.pyc" \
             --exclude "__pycache__/*" \
             --exclude ".DS_Store"
+          # -0 means store only, no compression
+          # this avoids needing uzlib on the pico w for extraction
+          # the zip will be larger but the pico has plenty of flash
           echo "zip_name=$ZIP_NAME" >> $GITHUB_ENV
           sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
           SHA256=$(cat "$ZIP_NAME.sha256" | cut -d' ' -f1)
