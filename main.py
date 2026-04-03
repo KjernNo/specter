@@ -9,10 +9,13 @@
 # all the actual screen logic lives in the screens/ folder
 # all hardware objects are created in hw.py so everything shares the same instances
 # the folder structure is:
-#   core/       hardware drivers, power, buttons, battery, lang, storage, buzzer
-#   modules/    third party stuff like ssd1306
-#   screens/    one file per screen, each has a run(oled) function
-#   data/       json files for settings and persistent data (created on first boot)
+#   core/                   hardware drivers, power, buttons, battery, lang, storage, buzzer
+#   core/languages/         translation files (strings.json)
+#   core/OLED/              oled related modules like the screensaver
+#   core/error-handling/    error logging and crash handling
+#   modules/                third party stuff like ssd1306
+#   screens/                one file per screen, each has a run(oled) function
+#   data/                   json files for settings and persistent data (created on first boot)
 
 import sys
 
@@ -20,6 +23,8 @@ import sys
 # otherwise it only looks in the root and /lib and wont find our files
 sys.path.append('/core')
 sys.path.append('/core/languages')
+sys.path.append('/core/OLED')
+sys.path.append('/core/error-handling')
 sys.path.append('/modules')
 sys.path.append('/screens')
 
@@ -39,6 +44,8 @@ import battery          # reads battery voltage from gp28 via voltage divider
 import storage          # reads and writes settings and data to flash as json
 import power            # handles the gp6 power button, shutdown and wake
 import buzzer           # piezo buzzer feedback on gp18
+import screensaver      # bouncing SPECTER logo, activates after 30s of inactivity
+import logger           # error logger, writes to /data/specter_log.txt
 import screen_spectrum  # 2.4ghz live spectrum analyzer with bar graph
 import screen_wifi      # scans and lists nearby wifi networks
 import screen_bt        # monitors ble advertising channels 37, 38, 39
@@ -48,6 +55,7 @@ import screen_wifi_setup # wifi network picker and on-screen keyboard for passwo
 import screen_ota          # checks specter.kjern.no for firmware updates and installs them
 import screen_hop_counter  # ble channel hop rate counter with scrolling graph
 import screen_signal_meter # live signal strength meter, tunable by channel
+import screen_log          # error log viewer in settings
 from hw import oled     # the actual oled display object, shared across everything
 from lang import T      # T("key") returns the right string for the current language
 
@@ -66,9 +74,9 @@ def MENU():
         (T("menu_spectrum"), screen_spectrum.run),
         (T("menu_wifi"),     screen_wifi.run),
         (T("menu_bt"),       screen_bt.run),
-        (T("menu_stats"),    screen_stats.run),
         (T("menu_hop"),      screen_hop_counter.run),
         (T("menu_signal"),   screen_signal_meter.run),
+        (T("menu_stats"),    screen_stats.run),
         (T("menu_settings"), screen_settings.run),
     ]
 
@@ -141,7 +149,7 @@ def init_nrf():
         oled.show()
         utime.sleep_ms(2000)   # give user time to read the error before moving on
 
-# -- main loop --------------------------------------------------------
+# -- easter egg -------------------------------------------------------
 
 def _easter_egg(oled):
     # easter egg screen, triggered by holding SELECT for 3 seconds on the main menu
@@ -183,15 +191,11 @@ def _easter_egg(oled):
     utime.sleep_ms(200)
 
     # frame 3 -- little buzzer celebration
-    try:
-        import buzzer as _buz
-        _buz.beep(30)
-        utime.sleep_ms(60)
-        _buz.beep(30)
-        utime.sleep_ms(60)
-        _buz.beep(60)
-    except:
-        pass
+    buzzer.beep(30)
+    utime.sleep_ms(60)
+    buzzer.beep(30)
+    utime.sleep_ms(60)
+    buzzer.beep(60)
 
     utime.sleep_ms(3000)
 
@@ -205,11 +209,20 @@ def _easter_egg(oled):
     oled.fill(0)
     oled.show()
 
+# -- main loop --------------------------------------------------------
+
 def main():
     # this function runs the whole os, called once on boot and again on wake from power off
     # we pass a reference to this function into power.init so power.py can call main()
     # directly when the user presses gp6 to wake up, instead of doing a hardware reset
     # doing it this way keeps thonny connected and avoids the reset causing usb issues
+
+    # capture a fresh boot time each time main() is called
+    # this matters because on wake from shutdown, main() is called directly
+    # by power.py and ticks_ms() has been running the whole time the pico
+    # was sitting in the wake loop, so the module level _boot_time is stale
+    global _boot_time
+    _boot_time = utime.ticks_ms()
     power.init(oled, _boot_time, main_fn=main)
 
     storage.on_boot()      # increment boot counter in flash
@@ -226,6 +239,12 @@ def main():
         # returns True if it was tapped briefly (cancelled), in which case we redraw
         # if it was held for 2 seconds it shuts down and never returns from check()
         if power.check(_boot_time):
+            screensaver.poke()
+            redraw = True
+
+        # check if screensaver should activate after 30s of inactivity
+        if screensaver.should_activate():
+            screensaver.run(oled)
             redraw = True
 
         # battery reading is cached in battery.py so this doesnt hit the adc every loop
@@ -244,11 +263,13 @@ def main():
 
         if buttons.up():
             # wrap around so going up from the first item takes you to the last
+            screensaver.poke()
             sel    = (sel - 1) % len(menu)
             redraw = True
 
         if buttons.down():
             # wrap around so going down from the last item takes you to the first
+            screensaver.poke()
             sel    = (sel + 1) % len(menu)
             redraw = True
 
@@ -256,6 +277,7 @@ def main():
         # if released quickly = normal select, held 3 seconds = easter egg
         # this way the two actions never conflict with each other
         if buttons.btn_sel.value() == 1:
+            screensaver.poke()   # any select interaction counts as activity
             utime.sleep_ms(30)   # debounce
             if buttons.btn_sel.value() == 1:
                 t = utime.ticks_ms()
@@ -270,8 +292,26 @@ def main():
                     utime.sleep_ms(20)
                 else:
                     # released before 3 seconds -- normal select action
+                    screensaver.poke()
                     buzzer.double()
-                    menu[sel][1](oled)
+                    try:
+                        menu[sel][1](oled)
+                    except Exception as e:
+                        # something crashed in a screen, log it and show error
+                        # then return to menu gracefully instead of freezing
+                        err = menu[sel][0] + ": " + str(e)
+                        logger.log(err)
+                        buzzer.error()
+                        oled.fill(0)
+                        oled.rect(0, 0, 128, 64, 1)
+                        oled.text("SCREEN ERROR", 12, 8)
+                        oled.hline(8, 19, 112, 1)
+                        oled.text(str(e)[:16], 0, 24)
+                        oled.text(str(e)[16:32], 0, 34)
+                        oled.text("logged to file", 8, 46)
+                        oled.text("returning...", 12, 56)
+                        oled.show()
+                        utime.sleep_ms(3000)
                     oled.contrast(storage.get_setting('brightness'))
                     redraw = True
 

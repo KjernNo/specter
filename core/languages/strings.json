@@ -4,13 +4,13 @@
   "boot_by":              {"en": "by Kjern",           "no": "av Kjern"},
 
   "menu_title":           {"en": "SPECTER",             "no": "SPECTER"},
-  "menu_hint":            {"en": "UP/DN  SEL=open",     "no": "OPP/NED SEL=åpne"},
+  "menu_hint":            {"en": "UP/DN  SEL=open",     "no": "OPP/NED SEL=apne"},
   "menu_spectrum":        {"en": "2.4G SPECTRUM",       "no": "2.4G SPEKTRUM"},
   "menu_wifi":            {"en": "WIFI SCANNER",        "no": "WIFI SKANNER"},
   "menu_bt":              {"en": "BT MONITOR",          "no": "BT MONITOR"},
-  "menu_hop":              {"en": "SIGNAL PROBE",          "no": "SIGNALPROBEN"},
-  "menu_signal":              {"en": "BLE HOPS",          "no": "BLE-HOPP"},
-  "menu_stats":           {"en": "STATS",          "no": "STATISTIKK"},
+  "menu_hop":             {"en": "HOP COUNTER",         "no": "HOP TELLER"},
+  "menu_signal":          {"en": "SIGNAL METER",        "no": "SIGNALMAALER"},
+  "menu_stats":           {"en": "STATS",               "no": "STATISTIKK"},
   "menu_settings":        {"en": "SETTINGS",            "no": "INNSTILLINGER"},
 
   "nrf_init":             {"en": "Init NRF...",         "no": "Starter NRF..."},
@@ -46,7 +46,7 @@
   "stats_history":        {"en": "HISTORY",             "no": "HISTORIKK"},
   "stats_pct":            {"en": "Pct:  ",              "no": "Prs:  "},
   "stats_v":              {"en": "V:    ",              "no": "V:    "},
-  "stats_freq":           {"en": "Freq: ",              "no": "Frekv: "},
+  "stats_freq":           {"en": "Freq: ",              "no": "Frekv:"},
   "stats_temp":           {"en": "Temp: ",              "no": "Temp: "},
   "stats_tick":           {"en": "Tick: ",              "no": "Tick: "},
   "stats_free":           {"en": "Free: ",              "no": "Ledig:"},
@@ -60,25 +60,24 @@
   "stats_id":             {"en": "ID: ",                "no": "ID: "},
   "stats_boots":          {"en": "Boots: ",             "no": "Oppstart:"},
   "stats_cycles":         {"en": "Cycles:",             "no": "Sykluser:"},
-  "stats_totup":          {"en": "TotUp: ",             "no": "TotOppe:"},
   "stats_up":             {"en": "Up: ",                "no": "Oppe: "},
-  "stats_session":        {"en": "SESSION",             "no": "SESJON"},
 
   "set_title":            {"en": "SETTINGS",            "no": "INNSTILLINGER"},
   "set_hint_nav":         {"en": "SEL=edit  BK=bk",     "no": "SEL=rediger TB=tb"},
   "set_hint_edit":        {"en": "UP/DN=chg SEL=ok",    "no": "OPP/NED=endr OK=ok"},
   "set_brightness":       {"en": "Brightness",          "no": "Lysstyrke"},
   "set_scan_speed":       {"en": "Scan Speed",          "no": "Skannfart"},
-  "set_decay":            {"en": "Bar Decay",           "no": "barforfall"},
-  "set_peak_decay":       {"en": "Peak Decay",          "no": "toppforfall"},
+  "set_decay":            {"en": "Bar Decay",           "no": "Barforfall"},
+  "set_peak_decay":       {"en": "Peak Decay",          "no": "Toppforfall"},
   "set_batt_update":      {"en": "Batt Upd(s)",         "no": "Batt opd(s)"},
   "set_buzzer":           {"en": "Buzzer",              "no": "Buzzer"},
   "set_language":         {"en": "Language",            "no": "Språk"},
   "set_wifi":             {"en": "WiFi Setup",          "no": "WiFi oppsett"},
   "set_updates":          {"en": "Check Updates",       "no": "Se etter opd"},
+  "set_log":              {"en": "Error Log",           "no": "Feillogg"},
 
   "kb_title":             {"en": "ENTER PASSWORD",      "no": "SKRIV PASSORD"},
-  "kb_hint":              {"en": "SEL=right BK=del",    "no": "SEL=høyre TB=slett"},
+  "kb_hint":              {"en": "SEL=right BK=del",    "no": "SEL=hoyre TB=slett"},
   "kb_hint2":             {"en": "PWR=select",          "no": "PWR=velg"},
   "kb_connect":           {"en": "Connecting...",       "no": "Kobler til..."},
   "kb_connected":         {"en": "Connected!",          "no": "Tilkoblet!"},
@@ -95,7 +94,7 @@
   "ota_cancel":           {"en": "BK=cancel",           "no": "TB=avbryt"},
   "ota_downloading":      {"en": "Downloading...",      "no": "Laster ned..."},
   "ota_installing":       {"en": "Installing...",       "no": "Installerer..."},
-  "ota_rebooting":        {"en": "Rebooting...",        "no": "Starter på nytt..."},
+  "ota_rebooting":        {"en": "Rebooting...",        "no": "Starter pa nytt..."},
   "ota_failed":           {"en": "Update failed.",      "no": "Oppdatering feilet."},
   "ota_error":            {"en": "Error: ",             "no": "Feil: "},
   "ota_current":          {"en": "Current: ",           "no": "Gjeldende: "},
@@ -108,8 +107,8 @@
 
   "_special_chars": {
     "_note": "These are the Norwegian special characters that cannot currently be rendered on the ssd1306 ASCII font. Listed here for reference when implementing custom font support. All three are in the Norwegian alphabet and used in common Norwegian words.",
-    "ae":  {"char": "æ", "upper": "Æ", "unicode": "U+00E6 / U+00C6", "example_words": ["være", "lærer", "æra"]},
-    "oe":  {"char": "ø", "upper": "Ø", "unicode": "U+00F8 / U+00D8", "example_words": ["gjøre", "størrelse", "rød"]},
-    "aa":  {"char": "å", "upper": "Å", "unicode": "U+00E5 / U+00C5", "example_words": ["også", "språk", "år"]}
+    "ae":  {"char": "æ", "upper": "Æ", "unicode": "U+00E6 / U+00C6", "example_words": ["vaere", "laerer", "aera"]},
+    "oe":  {"char": "ø", "upper": "Ø", "unicode": "U+00F8 / U+00D8", "example_words": ["gjore", "storrelse", "rod"]},
+    "aa":  {"char": "å", "upper": "Å", "unicode": "U+00E5 / U+00C5", "example_words": ["ogsa", "sprak", "ar"]}
   }
 }

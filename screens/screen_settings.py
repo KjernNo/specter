@@ -44,6 +44,7 @@ SETTINGS = [
     # ("set_language", "language", 0, 1, 1),
     ("set_wifi",        "wifi_ssid",  -1,  -1,  -1),   # action, opens wifi setup screen
     ("set_updates",     "ota",        -1,  -1,  -1),   # action, opens ota screen
+    ("set_log",         "log",        -1,  -1,  -1),   # action, opens error log screen
 ]
 
 def _val_display(key, val):
@@ -52,7 +53,7 @@ def _val_display(key, val):
     if key == "language":
         return "NO" if val == 'no' else "EN"
     if key == "buzzer_on":
-        return "ON" if val == 1 else "OFF" # This should explain itself, haha :D
+        return "PA" if val == 1 else "AV"   # pa = on in norwegian, av = off
     if key == "wifi_ssid":
         ssid = storage.get_setting('wifi_ssid')
         return ssid[:8] if ssid else "---"   # show saved ssid or dashes if none
@@ -122,6 +123,9 @@ def run(oled):
                     elif skey == 'ota':
                         import screen_ota
                         screen_ota.run(oled)
+                    elif skey == 'log':
+                        import screen_log
+                        screen_log.run(oled)
                     redraw = True
                 else:
                     editing = True
