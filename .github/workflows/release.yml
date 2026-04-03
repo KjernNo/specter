@@ -7,13 +7,13 @@
 # security stuff:
 #   we send a POST with a secret token + the new version number, thats it
 #   the server checks the token is legit, then goes to github itself to fetch
-#   the actual release, we dont send it any urls or zip data or anything
+#   the actual release -- we dont send it any urls or zip data or anything
 #   so even if someone fakes the ping, the server just checks github and finds
 #   whatever is actually there, cant trick it into serving something fake
 #   devices also check the sha256 hash of the zip before installing so a
 #   tampered download wont get through either
 #   the whole thing falls apart if someone gets into your github account tho
-#   so use 2FA, like I do :)
+#   so use 2FA, like I do ;)
 #
 # version format is MAJOR.MINOR.PATCH
 # patch is incremented automatically on every firmware push
@@ -72,6 +72,7 @@ jobs:
           git push
 
       - name: Build firmware zip
+        id: build
         run: |
           VERSION=${{ steps.version.outputs.new }}
           ZIP_NAME="specter-firmware-v$VERSION.zip"
@@ -85,7 +86,9 @@ jobs:
             --exclude ".DS_Store"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_ENV
           sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
-          echo "ZIP SHA256: $(cat $ZIP_NAME.sha256)"
+          SHA256=$(cat "$ZIP_NAME.sha256" | cut -d' ' -f1)
+          echo "ZIP SHA256: $SHA256"
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
 
       - name: Get commit info
         id: commit
@@ -112,7 +115,7 @@ jobs:
 
             ### Checksums
             ```
-            $(cat ${{ env.zip_name }}.sha256)
+            ${{ steps.build.outputs.sha256 }}  specter-firmware-${{ steps.version.outputs.tag }}.zip
             ```
 
             ---
@@ -125,6 +128,8 @@ jobs:
           prerelease: false
 
       - name: Ping server to notify new release
+        continue-on-error: true   # This code here was made while the server wasn't ready, so here we'll just
+                                  # ignore that the server isn't there, and pass either way for testing :)
         run: |
           # just pinging the server with the version number and our secret token
           # the server verifies the token then goes to github itself to grab the release
