@@ -10,21 +10,15 @@
 # downloads the update as a zip file, extracts it, replaces existing files, reboots
 #
 # the update server has two endpoints:
-#   GET /update/version  returns json. ex. {"version": "1.0.1"}
-#   GET /update/latest   returns a zip file containing the new firmware files
+#   GET /update/version  returns json like {"version": "1.0.2"}
+#   GET /update/latest   returns a 302 redirect to the github release zip
 #
-# the zip extractor handles both stored (method 0) and deflated (method 8) files
-# deflated means compressed with zlib/deflate which is standard zip compression
-# micropython has uzlib for decompression which handles this
+# urequests on pico w follows redirects automatically so the redirect is
+# transparent -- we just get the zip file at the end of the chain
 #
-# version comparison works by splitting "1.0.1" into (1, 0, 1) tuples
-# and comparing them element by element, so 1.0.2 > 1.0.1 etc.
-#
+# version is read from storage so it stays correct after an ota update
+# the zip extractor handles stored (method 0) and deflated (method 8) files
 # wifi credentials must be saved first via the wifi setup screen
-# if no ssid is saved, we show a message telling the user to set up wifi first
-#
-# the progress bar shows download progress based on content-length header
-# and install progress based on how many files have been extracted vs total
 
 import network
 import utime
@@ -34,12 +28,20 @@ import buttons
 import buzzer
 from lang import T
 
-SPECTER_VERSION = "1.0.0"
-UPDATE_URL      = "http://specter.kjern.no/update/latest"
-VERSION_URL     = "http://specter.kjern.no/update/version"
+# read version from settings so it reflects the actual installed version
+# falls back to 1.0.0 if nothing is saved (fresh install)
+def _get_current_version():
+    return storage.get_setting('version') or "1.0.0"
+
+# use http not https -- urequests on pico w can struggle with ssl on some servers
+# nginx on the server handles ssl termination, the internal flask app is http
+# the redirect from /update/latest goes to github which is https but
+# urequests handles that redirect fine since github's ssl is standard
+UPDATE_URL  = "http://specter.kjern.no/update/latest"
+VERSION_URL = "http://specter.kjern.no/update/version"
 
 def _connect_wifi(oled):
-    # connect to the saved wifi network, returns the wlan object if successful
+    # connect to the saved wifi network, returns wlan object if successful
     # returns None if no credentials are saved or connection times out
     ssid = storage.get_setting('wifi_ssid')
     pwd  = storage.get_setting('wifi_pass')
@@ -55,50 +57,41 @@ def _connect_wifi(oled):
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
 
-    # if already connected from a previous operation, reuse the connection
     if wlan.isconnected():
-        return wlan
+        return wlan   # already connected, reuse it
 
     wlan.connect(ssid, pwd)
     t = utime.ticks_ms()
     while not wlan.isconnected():
-        if utime.ticks_diff(utime.ticks_ms(), t) > 15000:   # 15 second timeout
+        if utime.ticks_diff(utime.ticks_ms(), t) > 15000:
             return None
         utime.sleep_ms(300)
     return wlan
 
 def _draw_progress(oled, label, pct):
-    # draws a progress bar with label and percentage
-    # used for both download and install phases
     oled.fill(0)
     oled.text(T("ota_title"), 36, 0)
     oled.hline(0, 9, 128, 1)
     oled.text(label[:16], 0, 18)
-    oled.rect(0, 32, 128, 12, 1)   # outer border of progress bar
+    oled.rect(0, 32, 128, 12, 1)
     filled = int(126 * pct / 100)
     if filled > 0:
-        oled.fill_rect(1, 33, filled, 10, 1)   # filled portion
+        oled.fill_rect(1, 33, filled, 10, 1)
     oled.text(str(pct) + "%", 52, 48)
     oled.show()
 
 def _extract_zip(oled, data):
-    # minimal zip extractor written for micropython
-    # parses the zip local file headers manually using ustruct
-    # supports method 0 (stored, no compression) and method 8 (deflated)
-    # files are written directly to the pico filesystem at their path in the zip
-    # parent directories are created automatically if they dont exist
-    #
-    # the zip format starts each file with a local file header signature PK\x03\x04
-    # we scan through the data looking for these signatures
-    # each header contains the filename length, extra field length, compression method,
-    # compressed size and uncompressed size which we use to extract each file
+    # minimal zip extractor for micropython
+    # handles method 0 (stored) and method 8 (deflated)
+    # scans for PK\x03\x04 local file header signatures and extracts each file
+    # creates parent directories automatically
     import uzlib
     import ustruct
 
     pos       = 0
     total_sig = b'PK\x03\x04'
 
-    # count total files first so we can show accurate progress
+    # count files first for accurate progress bar
     count = 0
     tmp   = 0
     while tmp < len(data) - 4:
@@ -114,39 +107,34 @@ def _extract_zip(oled, data):
             pos += 1
             continue
 
-        # parse the local file header fields
-        # all multi-byte values are little endian
         pos      += 4
         pos      += 2   # version needed
         pos      += 2   # general purpose flag
         method    = ustruct.unpack('<H', data[pos:pos+2])[0]; pos += 2
-        pos      += 4   # last mod time and date
+        pos      += 4   # mod time/date
         pos      += 4   # crc32
         comp_sz   = ustruct.unpack('<I', data[pos:pos+4])[0]; pos += 4
         uncomp_sz = ustruct.unpack('<I', data[pos:pos+4])[0]; pos += 4
         fname_len = ustruct.unpack('<H', data[pos:pos+2])[0]; pos += 2
         extra_len = ustruct.unpack('<H', data[pos:pos+2])[0]; pos += 2
         fname     = data[pos:pos+fname_len].decode('utf-8'); pos += fname_len
-        pos      += extra_len   # skip extra field
+        pos      += extra_len
 
         file_data  = data[pos:pos+comp_sz]
         pos       += comp_sz
 
         if fname.endswith('/'):
-            # directory entry, just create the folder
             try:
                 os.mkdir('/' + fname.rstrip('/'))
             except:
                 pass
             continue
 
-        # decompress if needed
         if method == 8:
-            file_data = uzlib.decompress(file_data, -15)   # -15 means raw deflate
+            file_data = uzlib.decompress(file_data, -15)
         elif method != 0:
-            continue   # unsupported compression method, skip this file
+            continue
 
-        # create parent directories if they dont exist
         full_path = '/' + fname
         parts = full_path.split('/')
         for i in range(2, len(parts)):
@@ -154,21 +142,21 @@ def _extract_zip(oled, data):
             try:
                 os.mkdir(d)
             except:
-                pass   # already exists, fine
+                pass
 
-        # write the file
         with open(full_path, 'wb') as f:
             f.write(file_data)
 
         done += 1
-        pct   = int(done * 100 / max(count, 1))
-        _draw_progress(oled, T("ota_installing"), pct)
+        _draw_progress(oled, T("ota_installing"), int(done * 100 / max(count, 1)))
 
 def run(oled):
     import power
-    import urequests   # micropython http library, not available by default on all builds
+    import urequests
 
-    # check that wifi has been set up before we even try anything
+    current_ver = _get_current_version()
+
+    # check wifi is set up
     ssid = storage.get_setting('wifi_ssid')
     if not ssid:
         oled.fill(0)
@@ -180,7 +168,6 @@ def run(oled):
         utime.sleep_ms(2500)
         return
 
-    # connect to wifi
     wlan = _connect_wifi(oled)
     if not wlan:
         buzzer.error()
@@ -192,11 +179,12 @@ def run(oled):
         utime.sleep_ms(2000)
         return
 
-    # fetch the current version from the server
+    # check version on server
     oled.fill(0)
     oled.text(T("ota_title"), 36, 0)
     oled.hline(0, 9, 128, 1)
     oled.text(T("ota_checking"), 20, 28)
+    oled.text(T("ota_current") + current_ver, 0, 42)
     oled.show()
 
     try:
@@ -217,37 +205,36 @@ def run(oled):
         return
 
     def ver_tuple(v):
-        # convert "1.2.3" to (1, 2, 3) for easy comparison
         try:
             return tuple(int(x) for x in v.split('.'))
         except:
             return (0, 0, 0)
 
-    if ver_tuple(remote_ver) <= ver_tuple(SPECTER_VERSION):
-        # already on the latest version
+    if ver_tuple(remote_ver) <= ver_tuple(current_ver):
+        # already up to date
         buzzer.beep(40)
         oled.fill(0)
         oled.text(T("ota_title"), 36, 0)
         oled.hline(0, 9, 128, 1)
-        oled.text(T("ota_up_to_date"), 0, 24)
-        oled.text(T("version") + SPECTER_VERSION, 0, 36)
+        oled.text(T("ota_up_to_date"), 0, 20)
+        oled.text(T("version") + current_ver, 0, 34)
         oled.show()
         utime.sleep_ms(2000)
         wlan.active(False)
         return
 
-    # new version available, ask the user if they want to install it
+    # new version available, ask user
     oled.fill(0)
     oled.text(T("ota_title"), 36, 0)
     oled.hline(0, 9, 128, 1)
-    oled.text(T("ota_found"),   0, 12)
-    oled.text(T("version") + remote_ver, 0, 24)
-    oled.hline(0, 34, 128, 1)
-    oled.text(T("ota_install"), 0, 38)
-    oled.text(T("ota_cancel"),  0, 50)
+    oled.text(T("ota_found"),              0, 12)
+    oled.text(T("version") + remote_ver,   0, 22)
+    oled.text(T("ota_current") + current_ver, 0, 32)
+    oled.hline(0, 42, 128, 1)
+    oled.text(T("ota_install"),            0, 46)
+    oled.text(T("ota_cancel"),             0, 56)
     oled.show()
 
-    # wait for select (install) or back (cancel)
     while True:
         if power.check(0):
             wlan.active(False)
@@ -259,32 +246,33 @@ def run(oled):
             break
         utime.sleep_ms(20)
 
-    # user confirmed, start downloading
+    # download -- urequests follows the 302 redirect from /update/latest
+    # to the actual github release zip automatically
     _draw_progress(oled, T("ota_downloading"), 0)
     try:
-        r     = urequests.get(UPDATE_URL, timeout=30)
+        r     = urequests.get(UPDATE_URL, timeout=60)   # longer timeout for big zip
         total = int(r.headers.get('Content-Length', 0))
         data  = bytearray()
-        chunk = 4096   # read in 4kb chunks to avoid running out of ram
+        chunk = 4096
         while True:
             buf = r.raw.read(chunk)
             if not buf:
                 break
             data.extend(buf)
             if total > 0:
-                pct = int(len(data) * 100 / total)
-                _draw_progress(oled, T("ota_downloading"), pct)
+                _draw_progress(oled, T("ota_downloading"), int(len(data) * 100 / total))
         r.close()
     except Exception as e:
         buzzer.error()
         oled.fill(0)
         oled.text(T("ota_failed"), 8, 28)
+        oled.text((T("ota_error") + str(e))[:16], 0, 40)
         oled.show()
         utime.sleep_ms(2000)
         wlan.active(False)
         return
 
-    # extract and install the zip
+    # extract and install
     try:
         _extract_zip(oled, bytes(data))
     except Exception as e:
@@ -297,15 +285,15 @@ def run(oled):
         wlan.active(False)
         return
 
-    # save the new version number and reboot
+    # save new version to settings so device knows what it is after reboot
     storage.set_setting('version', remote_ver)
     wlan.active(False)
 
     buzzer.startup()
     oled.fill(0)
-    oled.text(T("ota_title"),    36, 0)
+    oled.text(T("ota_title"),     36, 0)
     oled.hline(0, 9, 128, 1)
-    oled.text(T("ota_rebooting"), 8, 28)
+    oled.text(T("ota_rebooting"),  8, 28)
     oled.show()
     utime.sleep_ms(1500)
 
