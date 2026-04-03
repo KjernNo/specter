@@ -53,11 +53,28 @@ jobs:
             CURRENT="1.0.0"
           fi
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
+
           MAJOR=$(echo $CURRENT | cut -d. -f1)
           MINOR=$(echo $CURRENT | cut -d. -f2)
           PATCH=$(echo $CURRENT | cut -d. -f3)
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+
+          # check commit message for version bump keyword
+          # put [major] or [minor] in your commit message to bump those instead
+          # default with no keyword is always patch bump
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          echo "Commit message: $COMMIT_MSG"
+
+          if echo "$COMMIT_MSG" | grep -q "\[major\]"; then
+            NEW_VERSION="$((MAJOR + 1)).0.0"
+            echo "Bumping MAJOR"
+          elif echo "$COMMIT_MSG" | grep -q "\[minor\]"; then
+            NEW_VERSION="$MAJOR.$((MINOR + 1)).0"
+            echo "Bumping MINOR"
+          else
+            NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+            echo "Bumping PATCH (default)"
+          fi
+
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Current: $CURRENT -> New: $NEW_VERSION"
@@ -128,8 +145,7 @@ jobs:
           prerelease: false
 
       - name: Ping server to notify new release
-        continue-on-error: true   # This code here was made while the server wasn't ready, so here we'll just
-                                  # ignore that the server isn't there, and pass either way for testing :)
+        continue-on-error: true
         run: |
           # just pinging the server with the version number and our secret token
           # the server verifies the token then goes to github itself to grab the release
