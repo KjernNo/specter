@@ -1,0 +1,149 @@
+# .github/workflows/release.yml
+# SPECTER auto-release workflow
+#
+# triggers only when .py files or firmware folders change on main branch
+# readme, wiring docs, schematics, license etc. dont trigger a release
+#
+# security stuff:
+#   we send a POST with a secret token + the new version number, thats it
+#   the server checks the token is legit, then goes to github itself to fetch
+#   the actual release, we dont send it any urls or zip data or anything
+#   so even if someone fakes the ping, the server just checks github and finds
+#   whatever is actually there, cant trick it into serving something fake
+#   devices also check the sha256 hash of the zip before installing so a
+#   tampered download wont get through either
+#   the whole thing falls apart if someone gets into your github account tho
+#   so use 2FA, like I do :)
+#
+# version format is MAJOR.MINOR.PATCH
+# patch is incremented automatically on every firmware push
+# to bump major or minor, edit VERSION manually before pushing
+
+name: SPECTER Auto Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.py'
+      - 'core/**'
+      - 'screens/**'
+      - 'modules/**'
+      - 'core/languages/strings.json'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read and bump version
+        id: version
+        run: |
+          if [ -f VERSION ]; then
+            CURRENT=$(cat VERSION | tr -d '[:space:]')
+          else
+            CURRENT="1.0.0"
+          fi
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          MAJOR=$(echo $CURRENT | cut -d. -f1)
+          MINOR=$(echo $CURRENT | cut -d. -f2)
+          PATCH=$(echo $CURRENT | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+          echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Current: $CURRENT -> New: $NEW_VERSION"
+
+      - name: Commit bumped version
+        run: |
+          echo "${{ steps.version.outputs.new }}" > VERSION
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new }} [skip ci]"
+          git push
+
+      - name: Build firmware zip
+        run: |
+          VERSION=${{ steps.version.outputs.new }}
+          ZIP_NAME="specter-firmware-v$VERSION.zip"
+          zip -r "$ZIP_NAME" \
+            main.py \
+            core/ \
+            screens/ \
+            modules/ \
+            --exclude "*.pyc" \
+            --exclude "__pycache__/*" \
+            --exclude ".DS_Store"
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_ENV
+          sha256sum "$ZIP_NAME" > "$ZIP_NAME.sha256"
+          echo "ZIP SHA256: $(cat $ZIP_NAME.sha256)"
+
+      - name: Get commit info
+        id: commit
+        run: |
+          MSG=$(git log -1 --pretty=format:"%s" HEAD~1)
+          HASH=$(git log -1 --pretty=format:"%h" HEAD~1)
+          echo "message=$MSG" >> $GITHUB_OUTPUT
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "SPECTER ${{ steps.version.outputs.tag }}"
+          body: |
+            ## SPECTER Firmware ${{ steps.version.outputs.tag }}
+
+            **Commit:** `${{ steps.commit.outputs.hash }}` ${{ steps.commit.outputs.message }}
+
+            ### Installing
+            Download the zip below and extract to your Pico W, or use
+            SPECTER Settings -> Check Updates for OTA install.
+
+            ### Checksums
+            ```
+            $(cat ${{ env.zip_name }}.sha256)
+            ```
+
+            ---
+            *Auto-released by GitHub Actions*
+            *Built from commit `${{ steps.commit.outputs.hash }}`*
+          files: |
+            ${{ env.zip_name }}
+            ${{ env.zip_name }}.sha256
+          draft: false
+          prerelease: false
+
+      - name: Ping server to notify new release
+        run: |
+          # just pinging the server with the version number and our secret token
+          # the server verifies the token then goes to github itself to grab the release
+          # we dont send it the zip or any urls, it fetches all that itself
+          # keeps things simple and means we cant accidentally send it wrong data
+          HTTP_STATUS=$(curl -s -o /tmp/server_response.txt -w "%{http_code}" \
+            -X POST https://specter.kjern.no/update/notify \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.SPECTER_NOTIFY_SECRET }}" \
+            -d '{"version": "${{ steps.version.outputs.new }}"}')
+
+          echo "Server responded with HTTP $HTTP_STATUS"
+          echo "Response: $(cat /tmp/server_response.txt)"
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "Server notified, it will fetch release info from GitHub itself"
+          else
+            echo "WARNING: server ping failed with HTTP $HTTP_STATUS"
+            echo "The release is still published on GitHub"
+            echo "Server will pick up the new version on its next scheduled check"
+            exit 0
+          fi
