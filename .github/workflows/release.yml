@@ -64,10 +64,10 @@ jobs:
           COMMIT_MSG=$(git log -1 --pretty=format:"%s")
           echo "Commit message: $COMMIT_MSG"
 
-          if echo "$COMMIT_MSG" | grep -q "\[major\]"; then
+          if echo "$COMMIT_MSG" | grep -qi "\[major\]"; then
             NEW_VERSION="$((MAJOR + 1)).0.0"
             echo "Bumping MAJOR"
-          elif echo "$COMMIT_MSG" | grep -q "\[minor\]"; then
+          elif echo "$COMMIT_MSG" | grep -qi "\[minor\]"; then
             NEW_VERSION="$MAJOR.$((MINOR + 1)).0"
             echo "Bumping MINOR"
           else
