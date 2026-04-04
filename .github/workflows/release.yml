@@ -141,9 +141,30 @@ jobs:
 
             **Commit:** `${{ steps.commit.outputs.hash }}` ${{ steps.commit.outputs.message }}
 
-            ### Installing
-            Download the zip below and extract to your Pico W, or use
-            SPECTER Settings -> Check Updates for OTA install.
+            ---
+
+            ### Option 1 -- UF2 (easiest, recommended for first install)
+
+            No MicroPython needed, this flashes everything in one go.
+
+            1. Hold the **BOOTSEL** button on your Pico W while plugging it into USB
+            2. It shows up as a USB drive called **RPI-RP2**
+            3. Drag **`specter-${{ steps.version.outputs.tag }}.uf2`** onto the drive
+            4. The Pico reboots automatically and SPECTER starts up
+
+            ### Option 2 -- OTA update (if SPECTER is already installed)
+
+            On your device go to **Settings → Check Updates** and follow the on screen prompts.
+            Your WiFi network must be set up first under **Settings → WiFi Setup**.
+
+            ### Option 3 -- Manual zip install (advanced)
+
+            1. Flash standard MicroPython for Pico W from [micropython.org](https://micropython.org/download/RPI_PICO_W/)
+            2. Download **`specter-firmware-${{ steps.version.outputs.tag }}.zip`** and extract it
+            3. Copy all files and folders to the Pico W using Thonny or mpremote
+            4. Make sure the folder structure matches what is in the zip
+
+            ---
 
             ### Checksums
             ```
@@ -151,8 +172,8 @@ jobs:
             ```
 
             ---
-            *Auto-released by GitHub Actions*
-            *Built from commit `${{ steps.commit.outputs.hash }}`*
+            *Auto-released by GitHub Actions -- built from commit `${{ steps.commit.outputs.hash }}`*
+            *Hardware wiring and build guide: see [WIRING.md](https://github.com/KjernNo/specter/blob/main/WIRING.md)*
           files: |
             ${{ env.zip_name }}
             ${{ env.zip_name }}.sha256
