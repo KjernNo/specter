@@ -5,7 +5,7 @@
 # visibly on boot. See NOTICE.md for full attribution requirements.
 
 # buzzer.py, piezo buzzer feedback on gp18
-# the buzzer has a + marking so its an active buzzer, not passive
+# this is a passive piezo buzzer, the + marking is just polarity not an indicator of type
 # we drive it with pwm at 2500hz instead of plain dc because pwm is louder
 # tested sweep from 2000hz to 3900hz, 3900 was technically the loudest
 # but 2500 sounds better and is still noticeably louder than just dc on/off
@@ -71,7 +71,7 @@ def error(ms=80):
 
 def startup():
     # two beeps on boot, first short then longer
-    # sounds like the device is waking up, nice little personality touch :D
+    # sounds like the device is waking up, nice little personality touch
     if not _enabled(): return
     p = _on(); utime.sleep_ms(60);  _off(p)
     utime.sleep_ms(40)
