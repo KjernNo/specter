@@ -173,7 +173,7 @@ jobs:
 
             ---
             *Auto-released by GitHub Actions -- built from commit `${{ steps.commit.outputs.hash }}`*
-            *Hardware wiring and build guide: see [WIRING.md](https://github.com/KjernNo/specter/blob/main/WIRING.md)*
+            *Hardware wiring and build guide: see [WIRING.md](https://github.com/KjernNo/specter/blob/main/hardware/WIRING.md)*
           files: |
             ${{ env.zip_name }}
             ${{ env.zip_name }}.sha256
