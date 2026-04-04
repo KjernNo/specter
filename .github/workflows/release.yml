@@ -37,6 +37,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      new_version: ${{ steps.version.outputs.new }}
 
     steps:
       - name: Checkout repo
@@ -173,7 +176,7 @@ jobs:
 
             ---
             *Auto-released by GitHub Actions -- built from commit `${{ steps.commit.outputs.hash }}`*
-            *Hardware wiring and build guide: see [WIRING.md](https://github.com/KjernNo/specter/blob/main/hardware/WIRING.md)*
+            *Hardware wiring and build guide: see [WIRING.md](https://github.com/KjernNo/specter/blob/main/WIRING.md)*
           files: |
             ${{ env.zip_name }}
             ${{ env.zip_name }}.sha256
@@ -285,6 +288,8 @@ jobs:
           PYEOF
 
       - name: Combine MicroPython + filesystem into single UF2
+        env:
+          SPECTER_VERSION: ${{ needs.release.outputs.new_version }}
         run: |
           python3 << 'PYEOF'
           # UF2 format: 256 byte blocks, each containing 256 bytes of data
@@ -367,7 +372,10 @@ jobs:
               fs_blocks.append(make_uf2_block(chunk, addr, len(mp_blocks) + i, total_blocks))
 
           # write combined uf2
-          version = open('VERSION').read().strip()
+          # read version from the VERSION file that was committed by release job
+          # we pass it via env var to avoid reading the wrong file
+          import os
+          version = os.environ.get('SPECTER_VERSION', open('VERSION').read().strip())
           out_name = f'specter-v{version}.uf2'
           with open(out_name, 'wb') as f:
               for block in new_mp + fs_blocks:
@@ -381,8 +389,11 @@ jobs:
       - name: Upload UF2 to existing release
         run: |
           UF2_NAME=$(cat uf2_name.txt)
-          VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG="v$VERSION"
+          # use the tag from the release job, not the VERSION file on disk
+          # the VERSION file in the checkout may still be the old version
+          # because the version bump commit happens in the release job
+          # and the build-uf2 job checks out before that commit is visible
+          TAG="${{ needs.release.outputs.tag }}"
 
           echo "Uploading $UF2_NAME to release $TAG"
 
