@@ -6,7 +6,7 @@
 
 # storage.py, handles all persistent data on the pico's flash filesystem
 # we store two separate json files in a /data folder to keep things tidy
-# specter_data.json holds counters like boots, uptime and battery cycles
+# specter_data.json holds counters like boots and battery cycles
 # specter_settings.json holds all user configurable settings
 #
 # json was chosen because its human readable if you need to inspect or edit
@@ -16,6 +16,12 @@
 # this means when a firmware update adds a new setting, existing installs
 # will get the default value on next boot without any migration code needed
 # thats intentional, keep it that way when adding new settings!
+#
+# version bootstrapping:
+# when a new firmware is installed via OTA, a VERSION file lands in the root
+# on first boot after install, _bootstrap_version() reads that file, saves
+# the version to settings json, then deletes the file so it only runs once
+# this keeps the device version accurate without hardcoding it anywhere
 
 import json
 import os
@@ -72,24 +78,36 @@ def _save(path, data):
     except:
         pass   # if it fails we just lose that write, the data will be stale until next save
 
+def _bootstrap_version():
+    # if a VERSION file exists in the root, read it and save to settings
+    # this file is included in every OTA zip by the github actions workflow
+    # it gets extracted to /VERSION on the pico during install
+    # we read it once, update the version in settings, then delete it
+    # so this only ever runs once per firmware install, not every boot
+    VERSION_FILE = '/VERSION'
+    try:
+        with open(VERSION_FILE, 'r') as f:
+            ver = f.read().strip()
+        if ver:
+            settings = _load(SETTINGS_PATH, SETTINGS_DEFAULTS)
+            settings['version'] = ver
+            _save(SETTINGS_PATH, settings)
+        os.remove(VERSION_FILE)
+    except:
+        pass   # no VERSION file means either already bootstrapped or fresh micropython install
+
 # -- data functions ---------------------------------------------------
 
 def on_boot():
     # call this once at the very start of main(), increments boot counter
+    # also bootstraps version from VERSION file if present after an ota install
     # returns the full data dict so callers can read it without a second load
     _ensure_dir()
+    _bootstrap_version()   # reads /VERSION, updates settings, deletes file
     data = _load(DATA_PATH, DATA_DEFAULTS)
     data['boots'] += 1
     _save(DATA_PATH, data)
     return data
-
-def add_uptime(seconds):
-    # adds seconds to the total uptime counter
-    # called when exiting the stats screen and when shutting down
-    # we save frequently enough that a crash wont lose much uptime
-    data = _load(DATA_PATH, DATA_DEFAULTS)
-    data['total_uptime'] += seconds
-    _save(DATA_PATH, data)
 
 def add_cycle():
     # increment the battery cycle counter
