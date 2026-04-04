@@ -246,8 +246,9 @@ jobs:
           add_dir(fs, 'modules', '/modules')
 
           # write filesystem image
+          # littlefs-python stores the image in fs.context.buffer
           with open('fs.img', 'wb') as f:
-              f.write(bytes(fs.context))
+              f.write(bytes(fs.context.buffer))
           print(f"Filesystem image: {os.path.getsize('fs.img')} bytes")
           PYEOF
 
