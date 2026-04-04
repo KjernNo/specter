@@ -4,7 +4,7 @@
 # NOTICE: Products with a display must show "SPECTER / by Kjern" (or equivalent)
 # visibly on boot. See NOTICE.md for full attribution requirements.
 
-# main.py, the entry point for the whole OS
+# main.py, the entry point for the whole OS.
 # this file boots everything up, sets up hardware, and runs the main menu loop
 # all the actual screen logic lives in the screens/ folder
 # all hardware objects are created in hw.py so everything shares the same instances
