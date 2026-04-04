@@ -188,7 +188,7 @@ Keywords are case insensitive and can go anywhere in the commit message.
 
 CERN Open Hardware Licence Version 2 - Weakly Reciprocal (CERN-OHL-W-2.0).
 
-Full text in [LICENSE](LICENSE), attribution requirements in [NOTICE.md](NOTICE.md).
+Full text in [LICENSE](LICENSE.md), attribution requirements in [NOTICE.md](NOTICE.md).
 
 Short version: use it, modify it, sell products based on it. Just keep the source open, credit Kjern.no, and if your product has a display it must show "SPECTER, by Kjern" or equivalent on the boot screen. The credit cannot imply that Kjern.no endorses or is affiliated with your product, it is credit only.
 
