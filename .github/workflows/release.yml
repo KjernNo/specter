@@ -59,19 +59,26 @@ jobs:
           PATCH=$(echo $CURRENT | cut -d. -f3)
 
           # check commit message for version bump keyword
-          # put [major] or [minor] in your commit message to bump those instead
-          # default with no keyword is always patch bump
+          # [major] bumps major version, [minor] bumps minor, default bumps patch
+          # [NO-NEW] means dont increment at all, just replace files in current release
           COMMIT_MSG=$(git log -1 --pretty=format:"%s")
           echo "Commit message: $COMMIT_MSG"
 
-          if echo "$COMMIT_MSG" | grep -qi "\[major\]"; then
+          if echo "$COMMIT_MSG" | grep -qi "\[no-new\]"; then
+            NEW_VERSION="$CURRENT"
+            echo "no_new=true" >> $GITHUB_OUTPUT
+            echo "NO-NEW: keeping version $CURRENT, will replace existing release"
+          elif echo "$COMMIT_MSG" | grep -qi "\[major\]"; then
             NEW_VERSION="$((MAJOR + 1)).0.0"
+            echo "no_new=false" >> $GITHUB_OUTPUT
             echo "Bumping MAJOR"
           elif echo "$COMMIT_MSG" | grep -qi "\[minor\]"; then
             NEW_VERSION="$MAJOR.$((MINOR + 1)).0"
+            echo "no_new=false" >> $GITHUB_OUTPUT
             echo "Bumping MINOR"
           else
             NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+            echo "no_new=false" >> $GITHUB_OUTPUT
             echo "Bumping PATCH (default)"
           fi
 
@@ -80,6 +87,7 @@ jobs:
           echo "Current: $CURRENT -> New: $NEW_VERSION"
 
       - name: Commit bumped version
+        if: steps.version.outputs.no_new == 'false'
         run: |
           echo "${{ steps.version.outputs.new }}" > VERSION
           git config user.name  "github-actions[bot]"
@@ -125,6 +133,9 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "SPECTER ${{ steps.version.outputs.tag }}"
+          # if NO-NEW, overwrite the existing release assets without creating a new release
+          # if its a new version, draft=false creates a fresh release
+          prerelease: false
           body: |
             ## SPECTER Firmware ${{ steps.version.outputs.tag }}
 
@@ -146,7 +157,7 @@ jobs:
             ${{ env.zip_name }}
             ${{ env.zip_name }}.sha256
           draft: false
-          prerelease: false
+          # clobber replaces existing assets if the tag already exists (used by NO-NEW)
 
       - name: Ping server to notify new release
         continue-on-error: true   # server might not be up yet, dont fail the release over it
