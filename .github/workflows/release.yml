@@ -13,7 +13,7 @@
 #   devices also check the sha256 hash of the zip before installing so a
 #   tampered download wont get through either
 #   the whole thing falls apart if someone gets into your github account tho
-#   so use 2FA, like I do ;)
+#   so use 2FA, seriously
 #
 # version format is MAJOR.MINOR.PATCH
 # patch is incremented automatically on every firmware push
@@ -95,6 +95,7 @@ jobs:
           ZIP_NAME="specter-firmware-v$VERSION.zip"
           zip -r -0 "$ZIP_NAME" \
             main.py \
+            VERSION \
             core/ \
             screens/ \
             modules/ \
@@ -148,7 +149,7 @@ jobs:
           prerelease: false
 
       - name: Ping server to notify new release
-        continue-on-error: true
+        continue-on-error: true   # server might not be up yet, dont fail the release over it
         run: |
           # just pinging the server with the version number and our secret token
           # the server verifies the token then goes to github itself to grab the release
@@ -171,3 +172,187 @@ jobs:
             echo "Server will pick up the new version on its next scheduled check"
             exit 0
           fi
+
+  build-uf2:
+    runs-on: ubuntu-latest
+    needs: release   # run after the main release job
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get install -y python3 python3-pip
+          pip3 install mpremote
+
+      - name: Download MicroPython UF2 for Pico W
+        run: |
+          # always use a pinned micropython version so builds are reproducible
+          # update this url when you want to ship a newer micropython version
+          MPYTHON_URL="https://micropython.org/resources/firmware/RPI_PICO_W-20241025-v1.24.0.uf2"
+          curl -L -o micropython.uf2 "$MPYTHON_URL"
+          echo "Downloaded MicroPython UF2"
+          ls -lh micropython.uf2
+
+      - name: Install littlefs-python to build filesystem image
+        run: pip3 install littlefs-python
+
+      - name: Build filesystem image with SPECTER files
+        run: |
+          python3 << 'PYEOF'
+          import littlefs
+          import os
+          import glob
+
+          # pico w flash layout:
+          # micropython uses a littlefs2 filesystem in the last part of flash
+          # total flash is 2MB, micropython uses roughly 1MB for itself
+          # leaving about 1MB for the filesystem
+          # block size 4096, block count 352 = ~1.4MB filesystem
+          fs = littlefs.LittleFS(block_size=4096, block_count=352, prog_size=256)
+
+          def add_file(fs, local_path, remote_path):
+              print(f"Adding {local_path} -> {remote_path}")
+              with open(local_path, 'rb') as f:
+                  data = f.read()
+              # create parent directories
+              parts = remote_path.split('/')
+              for i in range(1, len(parts)):
+                  d = '/'.join(parts[:i])
+                  if d:
+                      try: fs.mkdir(d)
+                      except: pass
+              with fs.open(remote_path, 'wb') as f:
+                  f.write(data)
+
+          def add_dir(fs, local_dir, remote_dir):
+              for root, dirs, files in os.walk(local_dir):
+                  for fname in files:
+                      if fname.endswith('.pyc') or fname == '.DS_Store':
+                          continue
+                      local  = os.path.join(root, fname)
+                      remote = remote_dir + '/' + local[len(local_dir):]
+                      remote = remote.replace('\\', '/').replace('//', '/')
+                      add_file(fs, local, remote)
+
+          # add all firmware files
+          add_file(fs, 'main.py', '/main.py')
+          add_file(fs, 'VERSION', '/VERSION')
+          add_dir(fs, 'core',    '/core')
+          add_dir(fs, 'screens', '/screens')
+          add_dir(fs, 'modules', '/modules')
+
+          # write filesystem image
+          with open('fs.img', 'wb') as f:
+              f.write(bytes(fs.context))
+          print(f"Filesystem image: {os.path.getsize('fs.img')} bytes")
+          PYEOF
+
+      - name: Combine MicroPython + filesystem into single UF2
+        run: |
+          python3 << 'PYEOF'
+          # UF2 format: 256 byte blocks, each containing 256 bytes of data
+          # we append the filesystem image to the micropython uf2
+          # at the correct flash offset for pico w (0x10000000 base + offset)
+          #
+          # pico w flash map:
+          #   0x10000000  bootloader
+          #   0x10000100  micropython firmware
+          #   0x10180000  littlefs filesystem start (roughly, depends on build)
+          # the exact filesystem offset is embedded in the micropython binary
+          # for the standard micropython 1.24.0 build it is 0x10180000
+
+          import struct
+          import os
+
+          UF2_MAGIC_START0 = 0x0A324655
+          UF2_MAGIC_START1 = 0x9E5D5157
+          UF2_MAGIC_END    = 0x0AB16F30
+          FS_FLASH_OFFSET  = 0x10180000   # filesystem start in pico w flash
+          FLAG_FAMILYID    = 0x00002000
+          FAMILY_ID        = 0xe48bff56   # rp2040 family id
+
+          def read_uf2(path):
+              blocks = []
+              with open(path, 'rb') as f:
+                  while True:
+                      block = f.read(512)
+                      if len(block) < 512:
+                          break
+                      blocks.append(block)
+              return blocks
+
+          def make_uf2_block(data, addr, block_no, total_blocks):
+              assert len(data) == 256
+              payload = struct.pack('<IIIIII',
+                  UF2_MAGIC_START0,
+                  UF2_MAGIC_START1,
+                  FLAG_FAMILYID,
+                  addr,
+                  256,
+                  block_no,
+              )
+              payload += struct.pack('<I', total_blocks)
+              payload += struct.pack('<I', FAMILY_ID)
+              payload += data
+              payload += b'\x00' * (476 - 256)
+              payload += struct.pack('<I', UF2_MAGIC_END)
+              assert len(payload) == 512
+              return payload
+
+          # read existing micropython uf2 blocks
+          mp_blocks = read_uf2('micropython.uf2')
+          print(f"MicroPython UF2: {len(mp_blocks)} blocks")
+
+          # read filesystem image and split into 256 byte chunks
+          with open('fs.img', 'rb') as f:
+              fs_data = f.read()
+
+          # pad to 256 byte boundary
+          if len(fs_data) % 256:
+              fs_data += b'\xff' * (256 - len(fs_data) % 256)
+
+          fs_chunks = [fs_data[i:i+256] for i in range(0, len(fs_data), 256)]
+          print(f"Filesystem: {len(fs_chunks)} blocks at 0x{FS_FLASH_OFFSET:08x}")
+
+          total_blocks = len(mp_blocks) + len(fs_chunks)
+
+          # renumber micropython blocks with new total
+          new_mp = []
+          for i, block in enumerate(mp_blocks):
+              data    = block[32:288]   # payload bytes
+              addr    = struct.unpack('<I', block[12:16])[0]
+              new_mp.append(make_uf2_block(data, addr, i, total_blocks))
+
+          # build filesystem blocks
+          fs_blocks = []
+          for i, chunk in enumerate(fs_chunks):
+              addr = FS_FLASH_OFFSET + i * 256
+              fs_blocks.append(make_uf2_block(chunk, addr, len(mp_blocks) + i, total_blocks))
+
+          # write combined uf2
+          version = open('VERSION').read().strip()
+          out_name = f'specter-v{version}.uf2'
+          with open(out_name, 'wb') as f:
+              for block in new_mp + fs_blocks:
+                  f.write(block)
+
+          print(f"Written {out_name}: {os.path.getsize(out_name)} bytes")
+          with open('uf2_name.txt', 'w') as f:
+              f.write(out_name)
+          PYEOF
+
+      - name: Upload UF2 to existing release
+        run: |
+          UF2_NAME=$(cat uf2_name.txt)
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          TAG="v$VERSION"
+
+          echo "Uploading $UF2_NAME to release $TAG"
+
+          gh release upload "$TAG" "$UF2_NAME" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
